@@ -76,6 +76,7 @@ from src.services.runtime_resolver import (  # noqa: E402
     validate_secure_runtime_on_startup,
 )
 
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
