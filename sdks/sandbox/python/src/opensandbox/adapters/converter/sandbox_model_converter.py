@@ -90,6 +90,10 @@ class SandboxModelConverter:
         from opensandbox.api.lifecycle.models.host import (
             Host as ApiHost,
         )
+        from opensandbox.api.lifecycle.models.ossfs import (
+            OSSFS as ApiOSSFS,
+        )
+        from opensandbox.api.lifecycle.models.ossfs_version import OSSFSVersion
         from opensandbox.api.lifecycle.models.pvc import (
             PVC as ApiPVC,
         )
@@ -104,6 +108,17 @@ class SandboxModelConverter:
         if volume.pvc is not None:
             api_pvc = ApiPVC(claim_name=volume.pvc.claim_name)
 
+        api_ossfs = UNSET
+        if volume.ossfs is not None and volume.ossfs.access_key_id is not None and volume.ossfs.access_key_secret is not None:
+            api_ossfs = ApiOSSFS(
+                bucket=volume.ossfs.bucket,
+                endpoint=volume.ossfs.endpoint,
+                access_key_id=volume.ossfs.access_key_id,
+                access_key_secret=volume.ossfs.access_key_secret,
+                version=OSSFSVersion(volume.ossfs.version),
+                options=volume.ossfs.options if volume.ossfs.options is not None else UNSET,
+            )
+
         api_sub_path = UNSET
         if volume.sub_path is not None:
             api_sub_path = volume.sub_path
@@ -114,6 +129,7 @@ class SandboxModelConverter:
             read_only=volume.read_only,
             host=api_host,
             pvc=api_pvc,
+            ossfs=api_ossfs,
             sub_path=api_sub_path,
         )
 
