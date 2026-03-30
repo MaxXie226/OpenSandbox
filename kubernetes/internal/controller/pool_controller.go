@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	gerrors "errors"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -450,28 +451,18 @@ func (r *PoolReconciler) scalePool(ctx context.Context, args *scaleArgs) error {
 		}
 		maxUnavailable := r.getMaxUnavailable(pool, desiredSchedulableCnt)
 		notReadyCnt := r.countNotReadyPods(pods)
-		availableSlots := maxUnavailable - notReadyCnt
-		if availableSlots > 0 {
-			if createCnt > availableSlots {
-				createCnt = availableSlots
-			}
-		} else {
-			createCnt = 0 // Cannot create more, already at limit
-		}
-
+		limitedCreatCnt := maxUnavailable - notReadyCnt
+		createCnt = int32(math.Max(0, math.Min(float64(createCnt), float64(limitedCreatCnt))))
 		if createCnt > 0 {
 			log.Info("Scaling up pool with constraint", "pool", pool.Name,
 				"createCnt", createCnt, "maxUnavailable", maxUnavailable,
-				"notReadyCnt", notReadyCnt, "desiredSchedulableCnt", desiredSchedulableCnt)
+				"notReadyCnt", notReadyCnt, "desiredSchedulableCnt", desiredSchedulableCnt, "limitedCreatCnt", limitedCreatCnt)
 			for range createCnt {
 				if err := r.createPoolPod(ctx, pool, args.latestRevision); err != nil {
 					log.Error(err, "Failed to create pool pod")
 					errs = append(errs, err)
 				}
 			}
-		} else {
-			log.Info("Pool scaling paused, maxUnavailable limit reached", "pool", pool.Name,
-				"maxUnavailable", maxUnavailable, "notReadyCnt", notReadyCnt)
 		}
 	}
 
