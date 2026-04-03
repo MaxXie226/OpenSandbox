@@ -19,7 +19,7 @@ Manage outbound network access with `osb egress`. Treat runtime egress patching 
 Before suggesting egress commands, resolve the active OpenSandbox connection configuration:
 
 ```bash
-osb config show
+osb config show -o json
 ```
 
 Check the resolved values for:
@@ -28,14 +28,29 @@ Check the resolved values for:
 - `api_key`
 - `protocol`
 
+`osb config show` redacts the API key. Use it to confirm the effective target, not to recover the credential itself.
+
 Do not assume the user configures OpenSandbox only through environment variables. Work from the resolved configuration that the CLI will actually use.
 
-After reading the configuration:
+Hard stop:
 
-- summarize the active connection target back to the user
-- ask whether they want to keep the current settings, temporarily override them, or persist a new configuration
-- use `osb config set connection.<field> ...` only when the user wants a durable change
-- use CLI flags only when the user wants a one-off override
+```bash
+osb config show -o json
+```
+
+If `domain` is missing, stop and set it before policy changes:
+
+```bash
+osb config set connection.domain <host:port> -o json
+osb config show -o json
+```
+
+If auth is required and `api_key` is missing, stop and set it before policy changes:
+
+```bash
+osb config set connection.api_key <api-key> -o json
+osb config show -o json
+```
 
 ## Policy Model
 
@@ -60,19 +75,19 @@ Use `osb egress patch` for already-created sandboxes. Use `osb sandbox create --
 Inspect and patch:
 
 ```bash
-osb egress get <sandbox-id>
-osb egress patch <sandbox-id> --rule allow=pypi.org
-osb egress get <sandbox-id>
+osb egress get <sandbox-id> -o json
+osb egress patch <sandbox-id> --rule allow=pypi.org -o json
+osb egress get <sandbox-id> -o json
 ```
 
 Inspect, patch, and verify actual behavior:
 
 ```bash
-osb egress get <sandbox-id>
-osb egress patch <sandbox-id> --rule allow=www.github.com --rule deny=pypi.org
-osb egress get <sandbox-id>
-osb exec <sandbox-id> -- curl -I https://www.github.com
-osb exec <sandbox-id> -- curl -I https://pypi.org
+osb egress get <sandbox-id> -o json
+osb egress patch <sandbox-id> --rule allow=www.github.com --rule deny=pypi.org -o json
+osb egress get <sandbox-id> -o json
+osb command run <sandbox-id> -o raw -- curl -I https://www.github.com
+osb command run <sandbox-id> -o raw -- curl -I https://pypi.org
 ```
 
 ## Inspect Current Policy
@@ -80,7 +95,7 @@ osb exec <sandbox-id> -- curl -I https://pypi.org
 Start by reading the current runtime policy:
 
 ```bash
-osb egress get <sandbox-id>
+osb egress get <sandbox-id> -o json
 ```
 
 Use this before patching whenever the existing state matters.
@@ -90,10 +105,10 @@ Use this before patching whenever the existing state matters.
 Patch only the rules the user actually asked for:
 
 ```bash
-osb egress patch <sandbox-id> --rule allow=pypi.org
-osb egress patch <sandbox-id> --rule deny=internal.example.com
-osb egress patch <sandbox-id> --rule allow=*.example.com
-osb egress patch <sandbox-id> --rule allow=www.github.com --rule deny=pypi.org
+osb egress patch <sandbox-id> --rule allow=pypi.org -o json
+osb egress patch <sandbox-id> --rule deny=internal.example.com -o json
+osb egress patch <sandbox-id> --rule allow=*.example.com -o json
+osb egress patch <sandbox-id> --rule allow=www.github.com --rule deny=pypi.org -o json
 ```
 
 Rules:
@@ -107,20 +122,20 @@ Rules:
 Do not stop at policy text if the user is debugging connectivity. Verify runtime behavior with actual commands:
 
 ```bash
-osb exec <sandbox-id> -- curl -I https://pypi.org
-osb exec <sandbox-id> -- curl -I https://www.github.com
+osb command run <sandbox-id> -o raw -- curl -I https://pypi.org
+osb command run <sandbox-id> -o raw -- curl -I https://www.github.com
 ```
 
 Use:
 
 - `egress get` to confirm the current rule set
-- `osb exec ... curl ...` to verify whether outbound access is actually allowed or denied
+- `osb command run ... -o raw -- curl ...` to verify whether outbound access is actually allowed or denied
 
 ## Runtime Notes
 
 - use lifecycle create-time policy files when the sandbox has not been created yet
 - use `osb egress patch` only for an already-running or already-created sandbox
-- if network access is still wrong after a correct patch, continue with `troubleshoot-sandbox` instead of assuming the patch command failed silently
+- if network access is still wrong after a correct patch, continue with `sandbox-troubleshooting` instead of assuming the patch command failed silently
 
 ## Response Pattern
 
@@ -137,20 +152,20 @@ Keep command examples concrete and ready to paste.
 Allow one domain and verify:
 
 ```bash
-osb egress get <sandbox-id>
-osb egress patch <sandbox-id> --rule allow=pypi.org
-osb egress get <sandbox-id>
-osb exec <sandbox-id> -- curl -I https://pypi.org
+osb egress get <sandbox-id> -o json
+osb egress patch <sandbox-id> --rule allow=pypi.org -o json
+osb egress get <sandbox-id> -o json
+osb command run <sandbox-id> -o raw -- curl -I https://pypi.org
 ```
 
 Flip behavior between two domains:
 
 ```bash
-osb egress get <sandbox-id>
-osb egress patch <sandbox-id> --rule allow=www.github.com --rule deny=pypi.org
-osb egress get <sandbox-id>
-osb exec <sandbox-id> -- curl -I https://www.github.com
-osb exec <sandbox-id> -- curl -I https://pypi.org
+osb egress get <sandbox-id> -o json
+osb egress patch <sandbox-id> --rule allow=www.github.com --rule deny=pypi.org -o json
+osb egress get <sandbox-id> -o json
+osb command run <sandbox-id> -o raw -- curl -I https://www.github.com
+osb command run <sandbox-id> -o raw -- curl -I https://pypi.org
 ```
 
 ## Best Practices

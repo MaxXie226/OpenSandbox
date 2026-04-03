@@ -17,12 +17,17 @@
 from __future__ import annotations
 
 import importlib.resources
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from click import Command, Group, Option
 from click.testing import CliRunner
 
 from opensandbox_cli.commands.skills import _TARGETS, skills_group
+from opensandbox_cli.main import cli
+from opensandbox_cli.output import OutputFormatter
 from opensandbox_cli.skill_registry import list_builtin_skills
 
 
@@ -125,6 +130,41 @@ def isolated_skill_targets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
 
 
 class TestSkillsCommands:
+    def test_list_supports_json_output(
+        self,
+        runner: CliRunner,
+        isolated_skill_targets: None,
+    ) -> None:
+        result = runner.invoke(
+            skills_group,
+            ["list"],
+            obj=SimpleNamespace(output=OutputFormatter("json", color=False)),
+        )
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "skills" in data
+        assert "targets" in data
+        assert any(skill["slug"] == "sandbox-troubleshooting" for skill in data["skills"])
+        assert any(skill["slug"] == "sandbox-lifecycle" for skill in data["skills"])
+
+    def test_show_supports_json_output(
+        self,
+        runner: CliRunner,
+        isolated_skill_targets: None,
+    ) -> None:
+        result = runner.invoke(
+            skills_group,
+            ["show", "sandbox-lifecycle"],
+            obj=SimpleNamespace(output=OutputFormatter("json", color=False)),
+        )
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["skill"] == "sandbox-lifecycle"
+        assert data["title"] == "OpenSandbox Sandbox Lifecycle"
+        assert '"defaultAction": "deny"' in data["json_shapes"]
+
     def test_install_without_args_prints_guidance_and_does_not_install(
         self,
         runner: CliRunner,
@@ -133,20 +173,21 @@ class TestSkillsCommands:
     ) -> None:
         result = runner.invoke(skills_group, ["install"])
 
-        assert result.exit_code == 0
+        assert result.exit_code != 0
         assert "Install guidance:" in result.output
         assert "osb skills install <skill-name> --target <tool> --scope <scope>" in result.output
-        assert not (tmp_path / ".claude" / "skills" / "troubleshoot-sandbox.md").exists()
+        assert not (tmp_path / ".claude" / "skills" / "sandbox-troubleshooting.md").exists()
 
     def test_install_with_skill_but_without_target_prints_guidance(
         self,
         runner: CliRunner,
         isolated_skill_targets: None,
     ) -> None:
-        result = runner.invoke(skills_group, ["install", "troubleshoot-sandbox"])
+        result = runner.invoke(skills_group, ["install", "sandbox-troubleshooting"])
 
-        assert result.exit_code == 0
+        assert result.exit_code != 0
         assert "Install guidance:" in result.output
+        assert "Missing required option '--target'" in result.output
 
     def test_install_with_all_builtins_but_without_target_prints_guidance(
         self,
@@ -155,8 +196,9 @@ class TestSkillsCommands:
     ) -> None:
         result = runner.invoke(skills_group, ["install", "--all-builtins"])
 
-        assert result.exit_code == 0
+        assert result.exit_code != 0
         assert "Install guidance:" in result.output
+        assert "Missing required option '--target'" in result.output
 
     def test_install_copy_target_creates_named_skill_file(
         self,
@@ -166,14 +208,14 @@ class TestSkillsCommands:
     ) -> None:
         result = runner.invoke(
             skills_group,
-            ["install", "troubleshoot-sandbox", "--target", "claude", "--scope", "project"],
+            ["install", "sandbox-troubleshooting", "--target", "claude", "--scope", "project"],
         )
 
         assert result.exit_code == 0
-        dest = tmp_path / ".claude" / "skills" / "troubleshoot-sandbox.md"
+        dest = tmp_path / ".claude" / "skills" / "sandbox-troubleshooting.md"
         assert dest.exists()
         content = dest.read_text(encoding="utf-8")
-        assert content.startswith("---\nname: troubleshoot-sandbox")
+        assert content.startswith("---\nname: sandbox-troubleshooting")
 
     def test_install_codex_creates_skill_directory_with_frontmatter(
         self,
@@ -183,14 +225,36 @@ class TestSkillsCommands:
     ) -> None:
         result = runner.invoke(
             skills_group,
-            ["install", "troubleshoot-sandbox", "--target", "codex", "--scope", "project"],
+            ["install", "sandbox-troubleshooting", "--target", "codex", "--scope", "project"],
         )
 
         assert result.exit_code == 0
-        dest = tmp_path / ".codex" / "skills" / "troubleshoot-sandbox" / "SKILL.md"
+        dest = tmp_path / ".codex" / "skills" / "sandbox-troubleshooting" / "SKILL.md"
         content = dest.read_text(encoding="utf-8")
-        assert content.startswith("---\nname: troubleshoot-sandbox")
-        assert "# OpenSandbox Troubleshooting" in content
+        assert content.startswith("---\nname: sandbox-troubleshooting")
+        assert "# OpenSandbox Sandbox Troubleshooting" in content
+
+    def test_install_reports_already_present_without_prompt(
+        self,
+        runner: CliRunner,
+        isolated_skill_targets: None,
+        tmp_path: Path,
+    ) -> None:
+        first = runner.invoke(
+            skills_group,
+            ["install", "sandbox-troubleshooting", "--target", "codex", "--scope", "project"],
+        )
+        assert first.exit_code == 0
+
+        second = runner.invoke(
+            skills_group,
+            ["install", "sandbox-troubleshooting", "--target", "codex", "--scope", "project"],
+        )
+
+        assert second.exit_code == 0
+        assert "already_present" in second.output
+        dest = tmp_path / ".codex" / "skills" / "sandbox-troubleshooting" / "SKILL.md"
+        assert dest.exists()
 
     def test_install_all_builtins_to_codex_creates_skill_directories(
         self,
@@ -210,6 +274,23 @@ class TestSkillsCommands:
             dest = tmp_path / ".codex" / "skills" / skill.slug / "SKILL.md"
             assert dest.exists()
 
+    def test_install_supports_json_output(
+        self,
+        runner: CliRunner,
+        isolated_skill_targets: None,
+    ) -> None:
+        result = runner.invoke(
+            skills_group,
+            ["install", "network-egress", "--target", "codex", "--scope", "project"],
+            obj=SimpleNamespace(output=OutputFormatter("json", color=False)),
+        )
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["requires_restart"] is True
+        assert data["operations"][0]["skill"] == "network-egress"
+        assert data["operations"][0]["status"] == "installed"
+
     def test_install_rejects_skill_name_and_all_builtins_together(
         self,
         runner: CliRunner,
@@ -217,7 +298,7 @@ class TestSkillsCommands:
     ) -> None:
         result = runner.invoke(
             skills_group,
-            ["install", "troubleshoot-sandbox", "--all-builtins"],
+            ["install", "sandbox-troubleshooting", "--all-builtins"],
         )
 
         assert result.exit_code != 0
@@ -231,11 +312,11 @@ class TestSkillsCommands:
     ) -> None:
         result = runner.invoke(
             skills_group,
-            ["install", "troubleshoot-sandbox", "--target", "codex", "--scope", "global"],
+            ["install", "sandbox-troubleshooting", "--target", "codex", "--scope", "global"],
         )
 
         assert result.exit_code == 0
-        assert (tmp_path / "home" / ".codex" / "skills" / "troubleshoot-sandbox" / "SKILL.md").exists()
+        assert (tmp_path / "home" / ".codex" / "skills" / "sandbox-troubleshooting" / "SKILL.md").exists()
 
     def test_install_to_project_opencode_creates_skill_directory(
         self,
@@ -330,7 +411,7 @@ class TestSkillsCommands:
     ) -> None:
         install_result = runner.invoke(
             skills_group,
-            ["install", "troubleshoot-sandbox", "--target", "copilot", "--scope", "project"],
+            ["install", "sandbox-troubleshooting", "--target", "copilot", "--scope", "project"],
         )
         assert install_result.exit_code == 0
 
@@ -340,11 +421,32 @@ class TestSkillsCommands:
 
         uninstall_result = runner.invoke(
             skills_group,
-            ["uninstall", "troubleshoot-sandbox", "--target", "copilot", "--scope", "project"],
+            ["uninstall", "sandbox-troubleshooting", "--target", "copilot", "--scope", "project"],
         )
 
         assert uninstall_result.exit_code == 0
         assert dest.read_text(encoding="utf-8") == "team rules\n"
+
+    def test_uninstall_supports_json_output(
+        self,
+        runner: CliRunner,
+        isolated_skill_targets: None,
+    ) -> None:
+        install_result = runner.invoke(
+            skills_group,
+            ["install", "sandbox-troubleshooting", "--target", "codex", "--scope", "project"],
+        )
+        assert install_result.exit_code == 0
+
+        uninstall_result = runner.invoke(
+            skills_group,
+            ["uninstall", "sandbox-troubleshooting", "--target", "codex", "--scope", "project"],
+            obj=SimpleNamespace(output=OutputFormatter("json", color=False)),
+        )
+
+        assert uninstall_result.exit_code == 0
+        data = json.loads(uninstall_result.output)
+        assert data["operations"][0]["status"] == "removed"
 
     def test_reinstall_append_target_does_not_duplicate_skill_block(
         self,
@@ -354,19 +456,19 @@ class TestSkillsCommands:
     ) -> None:
         first = runner.invoke(
             skills_group,
-            ["install", "troubleshoot-sandbox", "--target", "copilot", "--scope", "project"],
+            ["install", "sandbox-troubleshooting", "--target", "copilot", "--scope", "project"],
         )
         assert first.exit_code == 0
 
         second = runner.invoke(
             skills_group,
-            ["install", "troubleshoot-sandbox", "--target", "copilot", "--scope", "project", "--force"],
+            ["install", "sandbox-troubleshooting", "--target", "copilot", "--scope", "project", "--force"],
         )
 
         assert second.exit_code == 0
         dest = tmp_path / ".github" / "copilot-instructions.md"
         content = dest.read_text(encoding="utf-8")
-        assert content.count("<!-- BEGIN opensandbox-troubleshoot-sandbox -->") == 1
+        assert content.count("<!-- BEGIN opensandbox-sandbox-troubleshooting -->") == 1
 
     def test_install_all_builtins_to_copy_target_creates_new_skill_files(
         self,
@@ -383,93 +485,134 @@ class TestSkillsCommands:
         assert "Install plan:" in result.output
         assert "install one file per skill" in result.output
         assert (tmp_path / ".claude" / "skills" / "network-egress.md").exists()
-        assert (tmp_path / ".claude" / "skills" / "devops-diagnostics.md").exists()
+        assert (tmp_path / ".claude" / "skills" / "sandbox-troubleshooting.md").exists()
+
+
+def _read_builtin_skill(package_file: str) -> str:
+    resource = importlib.resources.files("opensandbox_cli") / "skills" / package_file
+    return Path(str(resource)).read_text(encoding="utf-8")
+
+
+def _command(path: list[str]) -> Command:
+    current: Command = cli
+    for part in path:
+        assert isinstance(current, Group), f"{current.name} is not a command group"
+        current = current.commands[part]
+    return current
+
+
+def _option_names(command: Command) -> set[str]:
+    names: set[str] = set()
+    for param in command.params:
+        if isinstance(param, Option):
+            names.update(param.opts)
+            names.update(param.secondary_opts)
+    return names
 
 
 class TestSkillContentQuality:
-    def _read_builtin_skill(self, package_file: str) -> str:
-        resource = importlib.resources.files("opensandbox_cli") / "skills" / package_file
-        return Path(str(resource)).read_text(encoding="utf-8")
+    def test_sandbox_troubleshooting_keeps_triage_and_diagnostics_contract(self) -> None:
+        content = _read_builtin_skill("opensandbox-sandbox-troubleshooting.md")
 
-    def test_file_operations_examples_match_real_cli_flags(self) -> None:
-        content = self._read_builtin_skill("opensandbox-file-operations.md")
+        assert "## Triage Order" in content
+        assert "osb sandbox get <sandbox-id> -o json" in content
+        assert "osb devops summary <sandbox-id> -o raw" in content
+        assert "## Diagnostics Streams" in content
+        assert "## Symptom To Command Mapping" in content
 
-        assert "## Operation Modes" in content
-        assert 'osb file search <sandbox-id> /workspace --pattern "*.py"' in content
-        assert "osb file replace <sandbox-id> /path/to/file --old old --new new" in content
-        assert "osb file chmod <sandbox-id> /path/to/script --mode 0755" in content
-        assert "If the content should come from stdin, omit `-c`" in content
-        assert "do not suggest `rm` or `rmdir` until the target has been verified" in content
-        assert "osb file upload <sandbox-id> ./local.txt /workspace/local.txt" in content
-        assert "osb file info <sandbox-id> /workspace/tmp.txt" in content
+    def test_lifecycle_skill_keeps_json_shapes_and_health_guidance(self) -> None:
+        content = _read_builtin_skill("opensandbox-sandbox-lifecycle.md")
 
-    def test_command_execution_covers_execution_modes_and_session_workdir_rules(self) -> None:
-        content = self._read_builtin_skill("opensandbox-command-execution.md")
-
-        assert "## Execution Modes" in content
-        assert "osb command run <sandbox-id> --background -- <command>" in content
-        assert "osb command logs <sandbox-id> <execution-id> --cursor 0" in content
-        assert "session create --workdir" in content
-        assert "session run --workdir" in content
-        assert "Do not suggest `command logs` for foreground commands" in content
-
-    def test_sandbox_lifecycle_includes_copy_pasteable_json_shapes(self) -> None:
-        content = self._read_builtin_skill("opensandbox-sandbox-lifecycle.md")
-
-        assert "## Configuration Resolution" in content
-        assert "osb config show" in content
-        assert "keep using the current configuration, temporarily override it for one command, or persist new values" in content
-        assert "## Golden Path" in content
-        assert "osb sandbox health <sandbox-id>" in content
-        assert "osb sandbox endpoint <sandbox-id> --port 8080" in content
-        assert "osb sandbox metrics <sandbox-id> --watch" in content
-        assert "--skip-health-check" in content
+        assert "## JSON Shapes" in content
         assert '"defaultAction": "deny"' in content
         assert '"mountPath": "/workspace/data"' in content
-        assert '"claimName": "shared-models-pvc"' in content
-        assert '"readOnly": false' in content
+        assert "Prefer `health` over assuming readiness from `create` output alone" in content
 
-    def test_troubleshoot_skill_includes_authenticated_http_examples(self) -> None:
-        content = self._read_builtin_skill("opensandbox-troubleshoot.md")
+    def test_sandbox_troubleshooting_keeps_cli_first_and_http_fallback_guidance(self) -> None:
+        content = _read_builtin_skill("opensandbox-sandbox-troubleshooting.md")
 
-        assert "## Configuration Resolution" in content
-        assert "tell the user which server and protocol the CLI is currently pointed at" in content
-        assert "use raw HTTP only after domain, protocol, and API key expectations are explicit" in content
-        assert 'OPEN-SANDBOX-API-KEY: <api-key>' in content
-        assert "/diagnostics/summary" in content
-        assert "## Triage Model" in content
-        assert "osb sandbox health <sandbox-id>" in content
+        assert "## Operating Rules" in content
+        assert "use CLI commands when `osb` is available" in content
+        assert "use HTTP only when the CLI is unavailable" in content
+        assert "Use raw HTTP only after domain, protocol, and API key expectations are explicit." in content
         assert "## Symptom To Command Mapping" in content
-        assert "outbound network access failure" in content
-        assert "do not paper over the issue with `--skip-health-check`" in content
-        assert "/diagnostics/logs?tail=500" in content
 
-    def test_network_egress_covers_policy_model_and_behavior_verification(self) -> None:
-        content = self._read_builtin_skill("opensandbox-network-egress.md")
 
-        assert "## Policy Model" in content
-        assert "`defaultAction`" in content
-        assert "merge semantics" in content
-        assert "Use `osb egress patch` for already-created sandboxes" in content
-        assert "osb exec <sandbox-id> -- curl -I https://pypi.org" in content
-        assert "osb egress patch <sandbox-id> --rule allow=*.example.com" in content
+class TestSkillCliAlignment:
+    def test_command_execution_skill_matches_command_cli(self) -> None:
+        run_cmd = _command(["command", "run"])
+        session_run_cmd = _command(["command", "session", "run"])
+        logs_cmd = _command(["command", "logs"])
+        session_delete_cmd = _command(["command", "session", "delete"])
 
-    def test_devops_diagnostics_covers_plain_text_model_and_symptom_mapping(self) -> None:
-        content = self._read_builtin_skill("opensandbox-devops-diagnostics.md")
+        assert {"-d", "--background", "-w", "--workdir", "-t", "--timeout", "-o", "--output"} <= _option_names(run_cmd)
+        assert {"-w", "--workdir", "-t", "--timeout", "-o", "--output"} <= _option_names(session_run_cmd)
+        assert {"--cursor", "-o", "--output"} <= _option_names(logs_cmd)
+        assert {"-o", "--output"} <= _option_names(session_delete_cmd)
 
-        assert "## Configuration Resolution" in content
-        assert "Use the resolved configuration as the source of truth" in content
-        assert "## Diagnostics Model" in content
-        assert "plain-text output" in content
-        assert "## Command Selection By Symptom" in content
-        assert "suspected OOM or exit code issue" in content
-        assert "start with `summary`, then `inspect`" in content
-        assert "use `troubleshoot-sandbox` when the user wants root cause analysis" in content
+    def test_sandbox_lifecycle_skill_matches_sandbox_cli(self) -> None:
+        create_cmd = _command(["sandbox", "create"])
+        resume_cmd = _command(["sandbox", "resume"])
+        endpoint_cmd = _command(["sandbox", "endpoint"])
+        metrics_cmd = _command(["sandbox", "metrics"])
 
-    def test_network_egress_resolves_effective_configuration_before_policy_changes(self) -> None:
-        content = self._read_builtin_skill("opensandbox-network-egress.md")
+        assert {
+            "-i", "--image", "-t", "--timeout", "--entrypoint", "--network-policy-file",
+            "--volumes-file", "--skip-health-check", "--ready-timeout", "-o", "--output",
+        } <= _option_names(create_cmd)
+        assert {"--skip-health-check", "--resume-timeout", "-o", "--output"} <= _option_names(resume_cmd)
+        assert {"-p", "--port", "-o", "--output"} <= _option_names(endpoint_cmd)
+        assert {"--watch", "-o", "--output"} <= _option_names(metrics_cmd)
 
-        assert "## Configuration Resolution" in content
-        assert "osb config show" in content
-        assert "Do not assume the user configures OpenSandbox only through environment variables." in content
-        assert "temporarily override them, or persist a new configuration" in content
+    def test_file_operations_skill_matches_file_cli(self) -> None:
+        expected_subcommands = {
+            "cat", "write", "upload", "download", "rm", "mv", "mkdir",
+            "rmdir", "search", "info", "chmod", "replace",
+        }
+        file_group = _command(["file"])
+        assert isinstance(file_group, Group)
+        assert expected_subcommands <= set(file_group.commands)
+
+        assert {"-c", "--content", "--encoding", "--mode", "--owner", "--group", "-o", "--output"} <= _option_names(
+            _command(["file", "write"])
+        )
+        assert {"-p", "--pattern", "-o", "--output"} <= _option_names(_command(["file", "search"]))
+        assert {"--mode", "--owner", "--group", "-o", "--output"} <= _option_names(_command(["file", "chmod"]))
+        assert {"--old", "--new", "-o", "--output"} <= _option_names(_command(["file", "replace"]))
+
+    def test_network_egress_and_devops_skills_match_cli(self) -> None:
+        patch_cmd = _command(["egress", "patch"])
+        logs_cmd = _command(["devops", "logs"])
+        events_cmd = _command(["devops", "events"])
+        summary_cmd = _command(["devops", "summary"])
+
+        assert {"--rule", "-o", "--output"} <= _option_names(patch_cmd)
+        assert {"--tail", "-n", "--since", "-s", "-o", "--output"} <= _option_names(logs_cmd)
+        assert {"--limit", "-l", "-o", "--output"} <= _option_names(events_cmd)
+        assert {"--tail", "-n", "--event-limit", "-o", "--output"} <= _option_names(summary_cmd)
+
+    def test_skill_osb_examples_use_explicit_output_formats(self) -> None:
+        allowed_without_output = {
+            "osb --version",
+        }
+        skills_dir = Path("src/opensandbox_cli/skills")
+
+        missing_output: list[str] = []
+        for skill_path in sorted(skills_dir.glob("*.md")):
+            in_block = False
+            for line in skill_path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped.startswith("```bash"):
+                    in_block = True
+                    continue
+                if in_block and stripped == "```":
+                    in_block = False
+                    continue
+                if not in_block or not stripped.startswith("osb "):
+                    continue
+                if stripped in allowed_without_output:
+                    continue
+                if " -o " not in stripped:
+                    missing_output.append(f"{skill_path.name}: {stripped}")
+
+        assert missing_output == []

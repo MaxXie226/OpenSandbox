@@ -50,11 +50,10 @@ class TestLoadConfigFile:
         cfg = tmp_path / "config.toml"
         cfg.write_text(
             '[connection]\napi_key = "k"\n\n'
-            '[output]\nformat = "json"\ncolor = false\n\n'
+            '[output]\ncolor = false\n\n'
             '[defaults]\nimage = "alpine"\ntimeout = "5m"\n'
         )
         result = load_config_file(cfg)
-        assert result["output"]["format"] == "json"
         assert result["output"]["color"] is False
         assert result["defaults"]["image"] == "alpine"
         assert result["defaults"]["timeout"] == "5m"
@@ -75,7 +74,6 @@ class TestResolveConfig:
         assert result["protocol"] == "http"
         assert result["request_timeout"] == 30
         assert result["use_server_proxy"] is False
-        assert result["output_format"] == "table"
         assert result["color"] is True
 
     def test_file_values_override_defaults(self, tmp_path: Path) -> None:
@@ -83,7 +81,7 @@ class TestResolveConfig:
         cfg.write_text(
             '[connection]\napi_key = "file-key"\ndomain = "file.host"\n'
             'protocol = "https"\nrequest_timeout = 60\nuse_server_proxy = true\n\n'
-            '[output]\nformat = "json"\ncolor = false\n\n'
+            '[output]\ncolor = false\n\n'
             '[defaults]\nimage = "node:20"\ntimeout = "15m"\n'
         )
         result = resolve_config(config_path=cfg)
@@ -92,7 +90,6 @@ class TestResolveConfig:
         assert result["protocol"] == "https"
         assert result["request_timeout"] == 60
         assert result["use_server_proxy"] is True
-        assert result["output_format"] == "json"
         assert result["color"] is False
         assert result["default_image"] == "node:20"
         assert result["default_timeout"] == "15m"
@@ -106,7 +103,6 @@ class TestResolveConfig:
         monkeypatch.setenv("OPEN_SANDBOX_PROTOCOL", "https")
         monkeypatch.setenv("OPEN_SANDBOX_REQUEST_TIMEOUT", "120")
         monkeypatch.setenv("OPEN_SANDBOX_USE_SERVER_PROXY", "true")
-        monkeypatch.setenv("OPEN_SANDBOX_OUTPUT", "yaml")
 
         result = resolve_config(config_path=cfg)
         assert result["api_key"] == "env-key"
@@ -114,7 +110,6 @@ class TestResolveConfig:
         assert result["protocol"] == "https"
         assert result["request_timeout"] == 120
         assert result["use_server_proxy"] is True
-        assert result["output_format"] == "yaml"
 
     def test_cli_overrides_everything(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = tmp_path / "config.toml"
@@ -127,7 +122,6 @@ class TestResolveConfig:
             cli_protocol="https",
             cli_timeout=999,
             cli_use_server_proxy=True,
-            cli_output="yaml",
             config_path=cfg,
         )
         assert result["api_key"] == "cli-key"
@@ -135,7 +129,6 @@ class TestResolveConfig:
         assert result["protocol"] == "https"
         assert result["request_timeout"] == 999
         assert result["use_server_proxy"] is True
-        assert result["output_format"] == "yaml"
 
     def test_invalid_timeout_env_falls_through(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = tmp_path / "empty.toml"

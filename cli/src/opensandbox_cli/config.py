@@ -52,12 +52,11 @@ DEFAULT_CONFIG_TEMPLATE = """\
 # use_server_proxy = false
 
 [output]
-# format = "table"    # table | json | yaml
 # color = true
 
 [defaults]
 # image = "python:3.11"
-# timeout = "10m"
+# timeout = "10m"  # or "none" for manual cleanup mode
 """
 
 
@@ -82,14 +81,12 @@ def resolve_config(
     cli_protocol: str | None = None,
     cli_timeout: int | None = None,
     cli_use_server_proxy: bool | None = None,
-    cli_output: str | None = None,
     config_path: Path | None = None,
 ) -> dict[str, Any]:
     """Merge config from all sources and return a flat dict.
 
     Keys returned:
       - api_key, domain, protocol, request_timeout (int seconds), use_server_proxy (bool)
-      - output_format ("table" | "json" | "yaml")
       - default_image, default_timeout (str like "10m")
     """
     file_cfg = load_config_file(config_path)
@@ -118,10 +115,6 @@ def resolve_config(
             conn.get("use_server_proxy"),
             False,
         ),
-        "output_format": cli_output
-        or os.getenv("OPEN_SANDBOX_OUTPUT")
-        or output_cfg.get("format")
-        or "table",
         "color": output_cfg.get("color", True),
         "default_image": defaults.get("image"),
         "default_timeout": defaults.get("timeout"),

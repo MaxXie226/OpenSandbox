@@ -14,6 +14,28 @@ Manipulate sandbox files with `osb file` commands. Choose the operation mode fir
 - the user wants to search, replace, move, chmod, or inspect paths
 - the user needs directory creation or cleanup
 
+## Config Gate
+
+Run this first:
+
+```bash
+osb config show -o json
+```
+
+If `domain` is missing, stop and set it before file commands:
+
+```bash
+osb config set connection.domain <host:port> -o json
+osb config show -o json
+```
+
+If auth is required and `api_key` is missing, stop and set it before file commands:
+
+```bash
+osb config set connection.api_key <api-key> -o json
+osb config show -o json
+```
+
 ## Operation Modes
 
 Treat these as distinct categories:
@@ -34,22 +56,22 @@ If the path is uncertain, search first. If the file boundary crosses between hos
 Write and verify inside the sandbox:
 
 ```bash
-osb file write <sandbox-id> /workspace/app.txt -c "hello"
-osb file cat <sandbox-id> /workspace/app.txt
+osb file write <sandbox-id> /workspace/app.txt -c "hello" -o json
+osb file cat <sandbox-id> /workspace/app.txt -o raw
 ```
 
 Upload from host and verify in the sandbox:
 
 ```bash
-osb file upload <sandbox-id> ./local.txt /workspace/local.txt
-osb file cat <sandbox-id> /workspace/local.txt
+osb file upload <sandbox-id> ./local.txt /workspace/local.txt -o json
+osb file cat <sandbox-id> /workspace/local.txt -o raw
 ```
 
 Search before editing:
 
 ```bash
-osb file search <sandbox-id> /workspace --pattern "*.py"
-osb file info <sandbox-id> /workspace/main.py
+osb file search <sandbox-id> /workspace --pattern "*.py" -o json
+osb file info <sandbox-id> /workspace/main.py -o json
 ```
 
 ## Sandbox-Only File Edits
@@ -57,8 +79,8 @@ osb file info <sandbox-id> /workspace/main.py
 Read and write:
 
 ```bash
-osb file cat <sandbox-id> /path/to/file
-osb file write <sandbox-id> /path/to/file -c "hello"
+osb file cat <sandbox-id> /path/to/file -o raw
+osb file write <sandbox-id> /path/to/file -c "hello" -o json
 ```
 
 Use `write` with `-c/--content` when the new content is known directly. If the content should come from stdin, omit `-c` and pipe or paste the content into the command.
@@ -66,8 +88,8 @@ Use `write` with `-c/--content` when the new content is known directly. If the c
 Edit existing content:
 
 ```bash
-osb file replace <sandbox-id> /path/to/file --old old --new new
-osb file mv <sandbox-id> /old/path /new/path
+osb file replace <sandbox-id> /path/to/file --old old --new new -o json
+osb file mv <sandbox-id> /old/path /new/path -o json
 ```
 
 Prefer `replace` for small text substitutions and `mv` for rename/path changes. Do not rewrite a full file when a targeted replace is enough.
@@ -75,8 +97,8 @@ Prefer `replace` for small text substitutions and `mv` for rename/path changes. 
 Create directories:
 
 ```bash
-osb file mkdir <sandbox-id> /workspace/output
-osb file mkdir <sandbox-id> /workspace/a /workspace/b --mode 755
+osb file mkdir <sandbox-id> /workspace/output -o json
+osb file mkdir <sandbox-id> /workspace/a /workspace/b --mode 755 -o json
 ```
 
 ## Host <-> Sandbox Transfer
@@ -84,13 +106,13 @@ osb file mkdir <sandbox-id> /workspace/a /workspace/b --mode 755
 Host to sandbox:
 
 ```bash
-osb file upload <sandbox-id> ./local.txt /remote/path/local.txt
+osb file upload <sandbox-id> ./local.txt /remote/path/local.txt -o json
 ```
 
 Sandbox to host:
 
 ```bash
-osb file download <sandbox-id> /remote/path/result.json ./result.json
+osb file download <sandbox-id> /remote/path/result.json ./result.json -o json
 ```
 
 Rules:
@@ -104,21 +126,21 @@ Rules:
 Inspect metadata:
 
 ```bash
-osb file info <sandbox-id> /path/to/file
-osb file info <sandbox-id> /path/one /path/two
+osb file info <sandbox-id> /path/to/file -o json
+osb file info <sandbox-id> /path/one /path/two -o json
 ```
 
 Search by pattern:
 
 ```bash
-osb file search <sandbox-id> /workspace --pattern "*.py"
+osb file search <sandbox-id> /workspace --pattern "*.py" -o json
 ```
 
 Set permissions:
 
 ```bash
-osb file chmod <sandbox-id> /path/to/script --mode 0755
-osb file chmod <sandbox-id> /path/to/file --mode 0644 --owner root --group root
+osb file chmod <sandbox-id> /path/to/script --mode 755 -o json
+osb file chmod <sandbox-id> /path/to/file --mode 644 --owner root --group root -o json
 ```
 
 Use `info` after `chmod` when the user needs to confirm mode, ownership, or timestamps changed as expected.
@@ -128,13 +150,13 @@ Use `info` after `chmod` when the user needs to confirm mode, ownership, or time
 Delete files or directories only after verifying the target path:
 
 ```bash
-osb file info <sandbox-id> /workspace/tmp.txt
-osb file rm <sandbox-id> /workspace/tmp.txt
+osb file info <sandbox-id> /workspace/tmp.txt -o json
+osb file rm <sandbox-id> /workspace/tmp.txt -o json
 ```
 
 ```bash
-osb file search <sandbox-id> /workspace --pattern "old-*"
-osb file rmdir <sandbox-id> /workspace/old-dir
+osb file search <sandbox-id> /workspace --pattern "old-*" -o json
+osb file rmdir <sandbox-id> /workspace/old-dir -o json
 ```
 
 Rules:
@@ -166,51 +188,51 @@ Keep command examples concrete and ready to paste.
 Write and verify:
 
 ```bash
-osb file write <sandbox-id> /workspace/app.txt -c "hello"
-osb file cat <sandbox-id> /workspace/app.txt
+osb file write <sandbox-id> /workspace/app.txt -c "hello" -o json
+osb file cat <sandbox-id> /workspace/app.txt -o raw
 ```
 
 Upload and verify:
 
 ```bash
-osb file upload <sandbox-id> ./local.txt /workspace/local.txt
-osb file cat <sandbox-id> /workspace/local.txt
+osb file upload <sandbox-id> ./local.txt /workspace/local.txt -o json
+osb file cat <sandbox-id> /workspace/local.txt -o raw
 ```
 
 Replace and verify:
 
 ```bash
-osb file replace <sandbox-id> /workspace/app.txt --old hello --new world
-osb file cat <sandbox-id> /workspace/app.txt
+osb file replace <sandbox-id> /workspace/app.txt --old hello --new world -o json
+osb file cat <sandbox-id> /workspace/app.txt -o raw
 ```
 
 Change permissions and inspect:
 
 ```bash
-osb file chmod <sandbox-id> /workspace/script.sh --mode 0755
-osb file info <sandbox-id> /workspace/script.sh
+osb file chmod <sandbox-id> /workspace/script.sh --mode 755 -o json
+osb file info <sandbox-id> /workspace/script.sh -o json
 ```
 
 Create a directory and inspect it:
 
 ```bash
-osb file mkdir <sandbox-id> /workspace/output
-osb file info <sandbox-id> /workspace/output
+osb file mkdir <sandbox-id> /workspace/output -o json
+osb file info <sandbox-id> /workspace/output -o json
 ```
 
 Move a file and verify the new path:
 
 ```bash
-osb file mv <sandbox-id> /workspace/app.txt /workspace/archive/app.txt
-osb file info <sandbox-id> /workspace/archive/app.txt
+osb file mv <sandbox-id> /workspace/app.txt /workspace/archive/app.txt -o json
+osb file info <sandbox-id> /workspace/archive/app.txt -o json
 ```
 
 Delete and verify removal:
 
 ```bash
-osb file info <sandbox-id> /workspace/tmp.txt
-osb file rm <sandbox-id> /workspace/tmp.txt
-osb file search <sandbox-id> /workspace --pattern "tmp.txt"
+osb file info <sandbox-id> /workspace/tmp.txt -o json
+osb file rm <sandbox-id> /workspace/tmp.txt -o json
+osb file search <sandbox-id> /workspace --pattern "tmp.txt" -o json
 ```
 
 ## Best Practices

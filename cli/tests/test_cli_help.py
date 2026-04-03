@@ -37,6 +37,8 @@ class TestRootCLI:
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
         assert "OpenSandbox CLI" in result.output
+        assert "--request-timeout" in result.output
+        assert "--timeout" not in result.output
 
     def test_version(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["--version"])
@@ -45,7 +47,7 @@ class TestRootCLI:
 
     def test_root_lists_commands(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["--help"])
-        for cmd in ("sandbox", "command", "exec", "file", "egress", "config", "devops", "skills"):
+        for cmd in ("sandbox", "command", "file", "egress", "config", "devops", "skills"):
             assert cmd in result.output
 
 
@@ -93,18 +95,6 @@ class TestCommandHelp:
         assert result.exit_code == 0
         for subcmd in ("create", "run", "delete"):
             assert subcmd in result.output
-
-
-# ---------------------------------------------------------------------------
-# exec (top-level shortcut)
-# ---------------------------------------------------------------------------
-
-
-class TestExecHelp:
-    def test_exec_help(self, runner: CliRunner) -> None:
-        result = runner.invoke(cli, ["exec", "--help"])
-        assert result.exit_code == 0
-        assert "shortcut" in result.output.lower() or "command" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------

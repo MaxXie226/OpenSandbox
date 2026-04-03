@@ -16,23 +16,28 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
 import click
 
+from opensandbox_cli.client import ClientContext
+from opensandbox_cli.output import OutputFormatter
 from opensandbox_cli.skill_registry import (
     BUILTIN_SKILLS,
     DEFAULT_SKILL,
     SkillSpec,
     extract_section,
     get_builtin_skill,
+    get_builtin_skill_source,
     list_builtin_skills,
     read_skill_markdown,
     render_skill_for_target,
     split_frontmatter,
 )
-from opensandbox_cli.utils import handle_errors
+from opensandbox_cli.utils import handle_errors, output_option, prepare_output
 
 
 class CopyScopeConfig(TypedDict):
@@ -174,6 +179,33 @@ _TARGETS = cast(dict[str, TargetConfig], {
 _ALL_TARGET_NAMES = list(_TARGETS.keys())
 _ALL_SKILL_NAMES = list(BUILTIN_SKILLS.keys())
 _ALL_SCOPE_NAMES = ["project", "global"]
+_SKILL_AREAS = {
+    "sandbox-lifecycle": "Lifecycle",
+    "command-execution": "Execution",
+    "file-operations": "Files",
+    "network-egress": "Network",
+    "sandbox-troubleshooting": "Troubleshooting",
+}
+
+
+class InstallResult(TypedDict):
+    skill: str
+    target: str
+    target_label: str
+    scope: str
+    path: str
+    status: Literal["installed", "updated", "already_present"]
+    requires_restart: bool
+
+
+class UninstallResult(TypedDict):
+    skill: str
+    target: str
+    target_label: str
+    scope: str
+    path: str
+    status: Literal["removed", "not_installed"]
+    requires_restart: bool
 
 
 def _marker_begin(skill: SkillSpec) -> str:
@@ -229,6 +261,47 @@ def _render_for_target(name: str, scope: str, skill: SkillSpec) -> str:
     )
 
 
+def _get_output_formatter() -> OutputFormatter | None:
+    ctx = click.get_current_context(silent=True)
+    obj = getattr(ctx, "obj", None) if ctx else None
+    output = getattr(obj, "output", None) if obj else None
+    return output if isinstance(output, OutputFormatter) else None
+
+
+def _prepare_skills_output(output_format: str | None) -> None:
+    ctx = click.get_current_context(silent=True)
+    obj = getattr(ctx, "obj", None) if ctx else None
+    if isinstance(obj, ClientContext):
+        prepare_output(obj, output_format, allowed=("table", "json", "yaml"), fallback="table")
+        return
+
+    existing = getattr(obj, "output", None) if obj is not None else None
+    if output_format is None and isinstance(existing, OutputFormatter):
+        return
+
+    fmt = output_format or "table"
+    formatter = OutputFormatter(fmt, color=False)
+    if obj is not None:
+        obj.output = formatter
+
+
+def _emit_output(
+    *,
+    table_renderer,
+    data: object,
+) -> None:
+    output = _get_output_formatter()
+    if output is None or output.fmt == "table":
+        table_renderer()
+        return
+
+    if output.fmt == "json":
+        click.echo(json.dumps(data, indent=2, default=str))
+        return
+
+    output._print_yaml(data)
+
+
 def _remove_marked_block(existing: str, skill: SkillSpec) -> str:
     begin = _marker_begin(skill)
     end = _marker_end(skill)
@@ -258,30 +331,45 @@ def _is_installed(name: str, scope: str, skill: SkillSpec) -> bool:
     return _marker_begin(skill) in content and _marker_end(skill) in content
 
 
-def _install_copy(name: str, scope: str, skill: SkillSpec, content: str) -> Path:
+def _build_marked_block(skill: SkillSpec, content: str) -> str:
+    return (
+        f"{_marker_begin(skill)}\n"
+        f"{content.strip()}\n"
+        f"{_marker_end(skill)}\n"
+    )
+
+
+def _install_copy(name: str, scope: str, skill: SkillSpec, content: str) -> tuple[str, Path]:
     dest = _target_destination(name, scope, skill)
+    if not dest.exists():
+        status = "installed"
+    else:
+        existing = dest.read_text(encoding="utf-8")
+        status = "already_present" if existing == content else "updated"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(content, encoding="utf-8")
-    return dest
+    return status, dest
 
 
-def _install_append(name: str, scope: str, skill: SkillSpec, content: str) -> Path:
+def _install_append(name: str, scope: str, skill: SkillSpec, content: str) -> tuple[str, Path]:
     dest = _target_destination(name, scope, skill)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     existing = dest.read_text(encoding="utf-8") if dest.exists() else ""
     cleaned = _remove_marked_block(existing, skill).rstrip("\n")
-    marked_block = (
-        f"{_marker_begin(skill)}\n"
-        f"{content.strip()}\n"
-        f"{_marker_end(skill)}\n"
-    )
+    marked_block = _build_marked_block(skill, content)
     new_content = f"{cleaned}\n\n{marked_block}" if cleaned else marked_block
+    if not existing:
+        status = "installed"
+    elif new_content == existing:
+        status = "already_present"
+    else:
+        status = "updated" if _is_installed(name, scope, skill) else "installed"
     dest.write_text(new_content, encoding="utf-8")
-    return dest
+    return status, dest
 
 
-def _install_target(name: str, scope: str, skill: SkillSpec) -> Path:
+def _install_target(name: str, scope: str, skill: SkillSpec) -> tuple[str, Path]:
     content = _render_for_target(name, scope, skill)
     cfg = _get_scope_cfg(name, scope)
     if cfg["strategy"] == "copy":
@@ -320,27 +408,34 @@ def _resolve_skills(skill_name: str | None, install_all_builtins: bool) -> list[
     return [get_builtin_skill(skill_name)]
 
 
-def _print_install_guidance() -> None:
-    click.echo("Install guidance:\n")
-    click.echo("  Install one skill for one tool:")
-    click.echo("    osb skills install <skill-name> --target <tool> --scope <scope>")
-    click.echo()
-    click.echo("  Install all bundled skills for one tool:")
-    click.echo("    osb skills install --all-builtins --target <tool> --scope <scope>")
-    click.echo()
-    click.echo("  Discover skills and targets:")
-    click.echo("    osb skills list")
-    click.echo("    osb skills show <skill-name>")
-    click.echo()
-    click.echo(f"  Available skills: {', '.join(_ALL_SKILL_NAMES)}")
-    click.echo(f"  Available targets: {', '.join(_ALL_TARGET_NAMES)}")
-    click.echo(f"  Available scopes: {', '.join(_ALL_SCOPE_NAMES)}")
+def _install_guidance_text() -> str:
+    return (
+        "Install guidance:\n\n"
+        "  Discover bundled skills first:\n"
+        "    osb skills list\n"
+        "    osb skills show <skill-name>\n\n"
+        "  Install one skill for one tool:\n"
+        "    osb skills install <skill-name> --target <tool> --scope <scope>\n\n"
+        "  Install all bundled skills for one tool:\n"
+        "    osb skills install --all-builtins --target <tool> --scope <scope>\n\n"
+        "  Discover skills and targets:\n"
+        "    osb skills list\n"
+        "    osb skills show <skill-name>\n\n"
+        f"  Available skills: {', '.join(_ALL_SKILL_NAMES)}\n"
+        f"  Available targets: {', '.join(_ALL_TARGET_NAMES)}\n"
+        f"  Available scopes: {', '.join(_ALL_SCOPE_NAMES)}"
+    )
 
 
 @click.group("skills", invoke_without_command=True)
 @click.pass_context
 def skills_group(ctx: click.Context) -> None:
-    """Manage bundled OpenSandbox skills for AI coding tools."""
+    """Manage bundled OpenSandbox skills for AI coding tools.
+
+    Discover with `osb skills list`, inspect with `osb skills show <skill>`,
+    then install non-interactively with
+    `osb skills install <skill> --target codex --scope project`.
+    """
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
@@ -375,8 +470,9 @@ def skills_group(ctx: click.Context) -> None:
     "-f",
     is_flag=True,
     default=False,
-    help="Overwrite or refresh an existing installed skill without prompting.",
+    help="Accepted for compatibility. Installs are already non-interactive and idempotent.",
 )
+@output_option("table", "json", "yaml")
 @handle_errors
 def skills_install(
     skill_name: str | None,
@@ -384,42 +480,74 @@ def skills_install(
     target: str | None,
     scope: str | None,
     force: bool,
+    output_format: str | None,
 ) -> None:
-    """Install one or more bundled OpenSandbox skills."""
+    """Install one or more bundled OpenSandbox skills.
+
+    This command is non-interactive and idempotent. Re-running an install will
+    report `already_present` or `updated` instead of prompting.
+    """
+    _prepare_skills_output(output_format)
     if all_builtins and skill_name:
         raise click.UsageError("Pass either a skill name or --all-builtins, not both.")
-    if target is None or scope is None or (not all_builtins and skill_name is None):
-        _print_install_guidance()
-        return
+    if target is None:
+        raise click.UsageError(
+            "Missing required option '--target'.\n\n" + _install_guidance_text()
+        )
+    if scope is None:
+        raise click.UsageError(
+            "Missing required option '--scope'.\n\n" + _install_guidance_text()
+        )
+    if not all_builtins and skill_name is None:
+        raise click.UsageError(
+            "A skill name is required unless --all-builtins is used.\n\n" + _install_guidance_text()
+        )
+    _ = force
 
     skills = _resolve_skills(skill_name, all_builtins)
     targets = _ALL_TARGET_NAMES if target == "all" else [target]
-
-    click.echo("Install plan:\n")
-    for target_name in targets:
-        label = str(_TARGETS[target_name]["label"])
-        click.echo(f"  {label} [{scope}]: {_target_layout_summary(target_name, scope)}")
-    click.echo()
+    results: list[InstallResult] = []
 
     for skill in skills:
         for target_name in targets:
             label = str(_TARGETS[target_name]["label"])
-            dest = _target_destination(target_name, scope, skill)
-            installed = _is_installed(target_name, scope, skill)
+            status, installed_path = _install_target(target_name, scope, skill)
+            results.append(
+                {
+                    "skill": skill.slug,
+                    "target": target_name,
+                    "target_label": label,
+                    "scope": scope,
+                    "path": str(installed_path),
+                    "status": cast(Literal["installed", "updated", "already_present"], status),
+                    "requires_restart": True,
+                }
+            )
 
-            if installed and not force:
-                if not click.confirm(
-                    f"  {label}: {skill.slug} already installed at {dest}. Refresh it?",
-                    default=True,
-                ):
-                    click.echo(f"  ⏭  {label}: {skill.slug} skipped")
-                    continue
+    def _render_table() -> None:
+        click.echo("Install plan:\n")
+        for target_name in targets:
+            label = str(_TARGETS[target_name]["label"])
+            click.echo(f"  {label} [{scope}]: {_target_layout_summary(target_name, scope)}")
+        click.echo()
 
-            installed_path = _install_target(target_name, scope, skill)
-            click.echo(f"  ✅ {label} [{scope}]: {skill.slug} -> {installed_path}")
+        for result in results:
+            click.echo(
+                f"  {result['status']:<15} "
+                f"{result['target_label']} [{result['scope']}]: "
+                f"{result['skill']} -> {result['path']}"
+            )
 
-    click.echo()
-    click.echo("Done! Restart your AI coding tool to pick up the updated skill set.")
+        click.echo()
+        click.echo("Done! Restart your AI coding tool to pick up the updated skill set.")
+
+    _emit_output(
+        table_renderer=_render_table,
+        data={
+            "operations": results,
+            "requires_restart": True,
+        },
+    )
 
 
 @skills_group.command("show")
@@ -427,82 +555,150 @@ def skills_install(
     "skill_name",
     type=click.Choice(_ALL_SKILL_NAMES, case_sensitive=False),
 )
+@output_option("table", "json", "yaml")
 @handle_errors
-def skills_show(skill_name: str) -> None:
+def skills_show(skill_name: str, output_format: str | None) -> None:
     """Show details for a bundled skill."""
+    _prepare_skills_output(output_format)
     skill = get_builtin_skill(skill_name)
     markdown = read_skill_markdown(skill)
     _, body = split_frontmatter(markdown)
-
-    click.echo(f"Skill: {skill.slug}")
-    click.echo(f"Title: {skill.title}")
-    click.echo(f"Summary: {skill.summary}")
-    click.echo(f"Trigger: {skill.trigger_hint}")
-    click.echo()
-
     when_to_use = extract_section(body, "When To Use")
-    if when_to_use:
-        click.echo("When To Use:")
-        click.echo(when_to_use)
-        click.echo()
-
-    for label, heading in (
-        ("Quick Start", "Golden Paths"),
-        ("Quick Start", "Core Workflow"),
-        ("Quick Start", "Command Map"),
-        ("Quick Start", "Common Commands"),
-        ("Quick Start", "Fast Path"),
-        ("Quick Start", "Inspect Current Policy"),
-        ("Quick Start", "Preferred Workflow"),
+    quick_start = None
+    for heading in (
+        "Triage Order",
+        "Golden Paths",
+        "Core Workflow",
+        "Command Map",
+        "Common Commands",
+        "Fast Path",
+        "Inspect Current Policy",
+        "Preferred Workflow",
     ):
         quick_start = extract_section(body, heading)
         if quick_start:
-            click.echo(f"{label}:")
-            click.echo(quick_start)
-            click.echo()
             break
 
-    for heading in ("Minimal Closed Loops", "Response Pattern", "Guidance"):
-        section = extract_section(body, heading)
-        if section:
-            click.echo(f"{heading}:")
-            click.echo(section)
-            click.echo()
-
+    json_shapes = None
     if "```json" in body:
-        click.echo("JSON Shapes:")
         start = body.find("```json")
         end = body.find("```", start + 7)
         if start != -1 and end != -1:
-            click.echo(body[start + 7 : end].strip())
+            json_shapes = body[start + 7 : end].strip()
+
+    payload = {
+        "skill": skill.slug,
+        "title": skill.title,
+        "area": _SKILL_AREAS.get(skill.slug, "General"),
+        "summary": skill.summary,
+        "trigger_hint": skill.trigger_hint,
+        "when_to_use": when_to_use,
+        "quick_start": quick_start,
+        "json_shapes": json_shapes,
+        "content": markdown.strip(),
+    }
+
+    def _render_table() -> None:
+        click.echo(f"Skill: {skill.slug}")
+        click.echo(f"Title: {skill.title}")
+        click.echo(f"Area: {_SKILL_AREAS.get(skill.slug, 'General')}")
+        click.echo(f"Summary: {skill.summary}")
+        click.echo(f"Trigger: {skill.trigger_hint}")
+        click.echo()
+
+        if when_to_use:
+            click.echo("When To Use:")
+            click.echo(when_to_use)
             click.echo()
 
-    click.echo("Full Skill:")
-    click.echo(markdown.strip())
+        if quick_start:
+            click.echo("Quick Start:")
+            click.echo(quick_start)
+            click.echo()
+
+        for heading in ("Minimal Closed Loops", "Response Pattern", "Guidance"):
+            section = extract_section(body, heading)
+            if section:
+                click.echo(f"{heading}:")
+                click.echo(section)
+                click.echo()
+
+        if json_shapes:
+            click.echo("JSON Shapes:")
+            click.echo(json_shapes)
+            click.echo()
+
+        click.echo("Full Skill:")
+        click.echo(markdown.strip())
+
+    _emit_output(table_renderer=_render_table, data=payload)
 
 
 @skills_group.command("list")
+@output_option("table", "json", "yaml")
 @handle_errors
-def skills_list() -> None:
+def skills_list(output_format: str | None) -> None:
     """List bundled skills, supported targets, and install status."""
-    click.echo("Bundled skills:\n")
-    for skill in list_builtin_skills():
-        click.echo(f"  {skill.slug:<24}  {skill.summary}")
-        click.echo(f"  {'':<24}  {skill.trigger_hint}")
-
-    click.echo("\nSupported targets:\n")
+    _prepare_skills_output(output_format)
+    skill_rows = [
+        {
+            **asdict(skill),
+            "area": _SKILL_AREAS.get(skill.slug, "General"),
+            "source_path": str(get_builtin_skill_source(skill)),
+        }
+        for skill in list_builtin_skills()
+    ]
+    target_rows: list[dict[str, object]] = []
     for target_name, cfg in _TARGETS.items():
         label = str(cfg["label"])
         for scope_name in cfg["scopes"]:
-            layout = _target_layout_summary(target_name, scope_name)
-            click.echo(f"  {target_name:<10}  {scope_name:<8}  {label:<18}  {layout}")
+            installed_skills = []
             for skill in list_builtin_skills():
                 dest = _target_destination(target_name, scope_name, skill)
                 status = "installed" if _is_installed(target_name, scope_name, skill) else "not installed"
-                click.echo(
-                    f"  {'':<10}  {'':<8}  {'':<18}  {skill.slug:<24}  "
-                    f"{status:<13}  ({dest})"
+                installed_skills.append(
+                    {
+                        "skill": skill.slug,
+                        "status": status,
+                        "path": str(dest),
+                    }
                 )
+            target_rows.append(
+                {
+                    "target": target_name,
+                    "scope": scope_name,
+                    "label": label,
+                    "layout": _target_layout_summary(target_name, scope_name),
+                    "skills": installed_skills,
+                }
+            )
+
+    def _render_table() -> None:
+        click.echo("Bundled skills:\n")
+        for skill in list_builtin_skills():
+            area = _SKILL_AREAS.get(skill.slug, "General")
+            click.echo(f"  {skill.slug:<24}  [{area}] {skill.summary}")
+            click.echo(f"  {'':<24}  Trigger: {skill.trigger_hint}")
+
+        click.echo("\nSupported targets:\n")
+        for target_row in target_rows:
+            click.echo(
+                f"  {target_row['target']:<10}  {target_row['scope']:<8}  "
+                f"{target_row['label']:<18}  {target_row['layout']}"
+            )
+            for skill_row in cast(list[dict[str, str]], target_row["skills"]):
+                click.echo(
+                    f"  {'':<10}  {'':<8}  {'':<18}  {skill_row['skill']:<24}  "
+                    f"{skill_row['status']:<13}  ({skill_row['path']})"
+                )
+
+    _emit_output(
+        table_renderer=_render_table,
+        data={
+            "skills": skill_rows,
+            "targets": target_rows,
+        },
+    )
 
 
 @skills_group.command("uninstall")
@@ -525,19 +721,55 @@ def skills_list() -> None:
     default=None,
     help="Install scope to remove from.",
 )
+@output_option("table", "json", "yaml")
 @handle_errors
-def skills_uninstall(skill_name: str, target: str | None, scope: str | None) -> None:
+def skills_uninstall(
+    skill_name: str,
+    target: str | None,
+    scope: str | None,
+    output_format: str | None,
+) -> None:
     """Remove an installed OpenSandbox skill from one or more AI tools."""
-    if target is None or scope is None:
-        _print_install_guidance()
-        return
+    _prepare_skills_output(output_format)
+    if target is None:
+        raise click.UsageError(
+            "Missing required option '--target'.\n\n" + _install_guidance_text()
+        )
+    if scope is None:
+        raise click.UsageError(
+            "Missing required option '--scope'.\n\n" + _install_guidance_text()
+        )
     skill = get_builtin_skill(skill_name)
     targets = _ALL_TARGET_NAMES if target == "all" else [target]
+    results: list[UninstallResult] = []
 
     for target_name in targets:
         label = str(_TARGETS[target_name]["label"])
         removed, dest = _uninstall_target(target_name, scope, skill)
-        if removed:
-            click.echo(f"  🗑  {label} [{scope}]: removed {skill.slug} from {dest}")
-        else:
-            click.echo(f"  ⏭  {label} [{scope}]: {skill.slug} not installed")
+        results.append(
+            {
+                "skill": skill.slug,
+                "target": target_name,
+                "target_label": label,
+                "scope": scope,
+                "path": str(dest),
+                "status": "removed" if removed else "not_installed",
+                "requires_restart": True,
+            }
+        )
+
+    def _render_table() -> None:
+        for result in results:
+            click.echo(
+                f"  {result['status']:<15} "
+                f"{result['target_label']} [{result['scope']}]: "
+                f"{result['skill']} -> {result['path']}"
+            )
+
+    _emit_output(
+        table_renderer=_render_table,
+        data={
+            "operations": results,
+            "requires_restart": True,
+        },
+    )

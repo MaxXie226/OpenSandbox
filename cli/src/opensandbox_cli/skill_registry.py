@@ -20,19 +20,19 @@ class SkillSpec:
 
 
 BUILTIN_SKILLS: dict[str, SkillSpec] = {
-    "troubleshoot-sandbox": SkillSpec(
-        slug="troubleshoot-sandbox",
-        package_file="opensandbox-troubleshoot.md",
-        title="OpenSandbox Troubleshooting",
+    "sandbox-troubleshooting": SkillSpec(
+        slug="sandbox-troubleshooting",
+        package_file="opensandbox-sandbox-troubleshooting.md",
+        title="OpenSandbox Sandbox Troubleshooting",
         summary=(
-            "Diagnose failed or unhealthy sandboxes with sandbox state, logs, "
-            "events, inspect output, and concrete next actions."
+            "Triage failed or unhealthy sandboxes with state, health, summary, "
+            "inspect, events, logs, and concrete remediation steps."
         ),
         trigger_hint=(
             "Use when the user reports sandbox startup failures, crashes, OOM, "
-            "image pull problems, or unreachable services."
+            "image pull problems, pending sandboxes, or unreachable services."
         ),
-        marker_id="opensandbox-troubleshoot-sandbox",
+        marker_id="opensandbox-sandbox-troubleshooting",
     ),
     "sandbox-lifecycle": SkillSpec(
         slug="sandbox-lifecycle",
@@ -90,23 +90,9 @@ BUILTIN_SKILLS: dict[str, SkillSpec] = {
         ),
         marker_id="opensandbox-network-egress",
     ),
-    "devops-diagnostics": SkillSpec(
-        slug="devops-diagnostics",
-        package_file="opensandbox-devops-diagnostics.md",
-        title="OpenSandbox DevOps Diagnostics",
-        summary=(
-            "Use inspect, events, logs, and summary commands for lower-level "
-            "runtime diagnostics beyond basic lifecycle checks."
-        ),
-        trigger_hint=(
-            "Use when the user needs detailed OpenSandbox diagnostics output, "
-            "not just a high-level troubleshooting conclusion."
-        ),
-        marker_id="opensandbox-devops-diagnostics",
-    ),
 }
 
-DEFAULT_SKILL = "troubleshoot-sandbox"
+DEFAULT_SKILL = "sandbox-troubleshooting"
 
 
 def list_builtin_skills() -> list[SkillSpec]:

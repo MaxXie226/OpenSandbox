@@ -19,7 +19,7 @@ from __future__ import annotations
 import click
 
 from opensandbox_cli.client import ClientContext
-from opensandbox_cli.utils import handle_errors
+from opensandbox_cli.utils import handle_errors, output_option, prepare_output
 
 
 def _fetch_plain_text(obj: ClientContext, sandbox_id: str, endpoint: str, params: dict | None = None) -> str:
@@ -47,10 +47,18 @@ def devops_group(ctx: click.Context) -> None:
 @click.argument("sandbox_id")
 @click.option("--tail", "-n", type=int, default=100, show_default=True, help="Number of trailing log lines.")
 @click.option("--since", "-s", default=None, help="Only logs newer than this duration (e.g. 10m, 1h).")
+@output_option("raw", help_text="Output format: raw.")
 @click.pass_obj
 @handle_errors
-def devops_logs(obj: ClientContext, sandbox_id: str, tail: int, since: str | None) -> None:
+def devops_logs(
+    obj: ClientContext,
+    sandbox_id: str,
+    tail: int,
+    since: str | None,
+    output_format: str | None,
+) -> None:
     """Retrieve container logs for a sandbox."""
+    prepare_output(obj, output_format, allowed=("raw",), fallback="raw")
     params: dict = {"tail": tail}
     if since:
         params["since"] = since
@@ -62,10 +70,14 @@ def devops_logs(obj: ClientContext, sandbox_id: str, tail: int, since: str | Non
 
 @devops_group.command("inspect")
 @click.argument("sandbox_id")
+@output_option("raw", help_text="Output format: raw.")
 @click.pass_obj
 @handle_errors
-def devops_inspect(obj: ClientContext, sandbox_id: str) -> None:
+def devops_inspect(
+    obj: ClientContext, sandbox_id: str, output_format: str | None
+) -> None:
     """Retrieve detailed container/pod inspection info."""
+    prepare_output(obj, output_format, allowed=("raw",), fallback="raw")
     text = _fetch_plain_text(obj, sandbox_id, "inspect")
     click.echo(text)
 
@@ -75,10 +87,14 @@ def devops_inspect(obj: ClientContext, sandbox_id: str) -> None:
 @devops_group.command("events")
 @click.argument("sandbox_id")
 @click.option("--limit", "-l", type=int, default=50, show_default=True, help="Maximum number of events.")
+@output_option("raw", help_text="Output format: raw.")
 @click.pass_obj
 @handle_errors
-def devops_events(obj: ClientContext, sandbox_id: str, limit: int) -> None:
+def devops_events(
+    obj: ClientContext, sandbox_id: str, limit: int, output_format: str | None
+) -> None:
     """Retrieve events related to a sandbox."""
+    prepare_output(obj, output_format, allowed=("raw",), fallback="raw")
     params: dict = {"limit": limit}
     text = _fetch_plain_text(obj, sandbox_id, "events", params=params)
     click.echo(text)
@@ -90,10 +106,18 @@ def devops_events(obj: ClientContext, sandbox_id: str, limit: int) -> None:
 @click.argument("sandbox_id")
 @click.option("--tail", "-n", type=int, default=50, show_default=True, help="Number of trailing log lines.")
 @click.option("--event-limit", type=int, default=20, show_default=True, help="Maximum number of events.")
+@output_option("raw", help_text="Output format: raw.")
 @click.pass_obj
 @handle_errors
-def devops_summary(obj: ClientContext, sandbox_id: str, tail: int, event_limit: int) -> None:
+def devops_summary(
+    obj: ClientContext,
+    sandbox_id: str,
+    tail: int,
+    event_limit: int,
+    output_format: str | None,
+) -> None:
     """One-shot diagnostics: inspect + events + logs combined."""
+    prepare_output(obj, output_format, allowed=("raw",), fallback="raw")
     params: dict = {"tail": tail, "event_limit": event_limit}
     text = _fetch_plain_text(obj, sandbox_id, "summary", params=params)
     click.echo(text)

@@ -20,7 +20,7 @@ import click
 from opensandbox.models.sandboxes import NetworkRule
 
 from opensandbox_cli.client import ClientContext
-from opensandbox_cli.utils import handle_errors
+from opensandbox_cli.utils import handle_errors, output_option, prepare_output
 
 
 def _parse_rule(value: str) -> NetworkRule:
@@ -49,10 +49,12 @@ def egress_group(ctx: click.Context) -> None:
 
 @egress_group.command("get")
 @click.argument("sandbox_id")
+@output_option("table", "json", "yaml")
 @click.pass_obj
 @handle_errors
-def egress_get(obj: ClientContext, sandbox_id: str) -> None:
+def egress_get(obj: ClientContext, sandbox_id: str, output_format: str | None) -> None:
     """Get the current egress policy."""
+    prepare_output(obj, output_format, allowed=("table", "json", "yaml"), fallback="table")
     sandbox = obj.connect_sandbox(sandbox_id)
     try:
         policy = sandbox.get_egress_policy()
@@ -70,10 +72,17 @@ def egress_get(obj: ClientContext, sandbox_id: str) -> None:
     required=True,
     help="Patch rule in ACTION=TARGET form. Repeatable, e.g. --rule allow=pypi.org.",
 )
+@output_option("table", "json", "yaml")
 @click.pass_obj
 @handle_errors
-def egress_patch(obj: ClientContext, sandbox_id: str, rules: tuple[str, ...]) -> None:
+def egress_patch(
+    obj: ClientContext,
+    sandbox_id: str,
+    rules: tuple[str, ...],
+    output_format: str | None,
+) -> None:
     """Patch runtime egress rules with merge semantics."""
+    prepare_output(obj, output_format, allowed=("table", "json", "yaml"), fallback="table")
     parsed_rules = [_parse_rule(rule) for rule in rules]
     sandbox = obj.connect_sandbox(sandbox_id)
     try:
