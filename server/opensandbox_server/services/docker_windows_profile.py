@@ -242,11 +242,89 @@ def fetch_execd_install_bat(
         return data
 
 
+def fetch_execd_windows_binary(
+    *,
+    docker_client,
+    execd_image: str,
+    cache: dict[str, bytes],
+    cache_lock: Lock,
+    docker_operation: Callable[[str, Optional[str]], object],
+    logger: logging.Logger,
+) -> bytes:
+    """Fetch execd.exe from execd image and memoize in caller-provided cache."""
+    cached = cache.get("windows_execd_bin")
+    if cached is not None:
+        return cached
+
+    with cache_lock:
+        cached = cache.get("windows_execd_bin")
+        if cached is not None:
+            return cached
+
+        container = None
+        try:
+            with docker_operation("execd windows bin cache create container", "execd-cache"):
+                container = docker_client.containers.create(
+                    image=execd_image,
+                    command=["tail", "-f", "/dev/null"],
+                    name=f"sandbox-execd-winbin-{uuid4()}",
+                )
+            with docker_operation("execd windows bin cache start container", "execd-cache"):
+                container.start()
+            with docker_operation("execd windows bin cache read archive", "execd-cache"):
+                stream, _ = container.get_archive("/execd.exe")
+                tar_blob = b"".join(stream)
+            with tarfile.open(fileobj=io.BytesIO(tar_blob), mode="r:*") as tar:
+                member = next(
+                    (m for m in tar.getmembers() if m.isfile() and m.name.endswith("execd.exe")),
+                    None,
+                )
+                if member is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail={
+                            "code": SandboxErrorCodes.EXECD_DISTRIBUTION_FAILED,
+                            "message": "execd.exe was not found in execd image archive.",
+                        },
+                    )
+                extracted = tar.extractfile(member)
+                if extracted is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail={
+                            "code": SandboxErrorCodes.EXECD_DISTRIBUTION_FAILED,
+                            "message": "Failed to extract execd.exe from execd image archive.",
+                        },
+                    )
+                data = extracted.read()
+        except HTTPException:
+            raise
+        except DockerException as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "code": SandboxErrorCodes.EXECD_DISTRIBUTION_FAILED,
+                    "message": f"Failed to fetch execd.exe from execd image: {str(exc)}",
+                },
+            ) from exc
+        finally:
+            if container is not None:
+                try:
+                    with docker_operation("execd windows bin cache cleanup container", "execd-cache"):
+                        container.remove(force=True)
+                except DockerException as cleanup_exc:
+                    logger.warning("Failed to cleanup temporary execd windows bin container: %s", cleanup_exc)
+
+        cache["windows_execd_bin"] = data
+        return data
+
+
 def install_windows_oem_scripts(
     *,
     container,
     sandbox_id: str,
     install_bat_bytes: bytes,
+    execd_windows_bin_bytes: bytes,
     ensure_directory: Callable[[object, str, Optional[str]], None],
     docker_operation: Callable[[str, Optional[str]], object],
 ) -> None:
@@ -263,6 +341,12 @@ def install_windows_oem_scripts(
         install_script.size = len(install_bat_bytes)
         install_script.mtime = int(time.time())
         tar.addfile(install_script, io.BytesIO(install_bat_bytes))
+
+        execd_bin = tarfile.TarInfo(name="oem/execd.exe")
+        execd_bin.mode = 0o644
+        execd_bin.size = len(execd_windows_bin_bytes)
+        execd_bin.mtime = int(time.time())
+        tar.addfile(execd_bin, io.BytesIO(execd_windows_bin_bytes))
     tar_stream.seek(0)
     try:
         with docker_operation("install windows OEM scripts", sandbox_id):

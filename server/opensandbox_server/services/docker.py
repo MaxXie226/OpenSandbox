@@ -67,6 +67,7 @@ from opensandbox_server.services.docker_port_allocator import allocate_port_bind
 from opensandbox_server.services.docker_windows_profile import (
     apply_windows_runtime_host_config_defaults,
     fetch_execd_install_bat,
+    fetch_execd_windows_binary,
     inject_windows_user_ports,
     install_windows_oem_scripts,
     is_windows_platform,
@@ -2345,10 +2346,19 @@ class DockerSandboxService(DockerDiagnosticsMixin, OSSFSMixin, SandboxService, E
                     docker_operation=self._docker_operation,
                     logger=logger,
                 )
+                execd_windows_bin_bytes = fetch_execd_windows_binary(
+                    docker_client=self.docker_client,
+                    execd_image=self.execd_image,
+                    cache=self._windows_profile_cache,
+                    cache_lock=self._execd_archive_lock,
+                    docker_operation=self._docker_operation,
+                    logger=logger,
+                )
                 install_windows_oem_scripts(
                     container=container,
                     sandbox_id=sandbox_id,
                     install_bat_bytes=install_bat_bytes,
+                    execd_windows_bin_bytes=execd_windows_bin_bytes,
                     ensure_directory=self._ensure_directory,
                     docker_operation=self._docker_operation,
                 )

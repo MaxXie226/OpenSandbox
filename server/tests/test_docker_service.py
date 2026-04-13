@@ -1134,6 +1134,7 @@ def test_create_and_start_container_windows_profile_keeps_image_entrypoint(mock_
     service = DockerSandboxService(config=_app_config())
     with (
         patch("opensandbox_server.services.docker.fetch_execd_install_bat", return_value=b"script"),
+        patch("opensandbox_server.services.docker.fetch_execd_windows_binary", return_value=b"exe"),
         patch("opensandbox_server.services.docker.install_windows_oem_scripts") as mock_install,
     ):
         service._create_and_start_container(
@@ -1170,6 +1171,7 @@ def test_create_and_start_container_windows_profile_skips_linux_runtime_injectio
     with (
         patch.object(service, "_prepare_sandbox_runtime") as mock_prepare,
         patch("opensandbox_server.services.docker.fetch_execd_install_bat", return_value=b"script"),
+        patch("opensandbox_server.services.docker.fetch_execd_windows_binary", return_value=b"exe"),
         patch("opensandbox_server.services.docker.install_windows_oem_scripts") as mock_install,
     ):
         service._create_and_start_container(
