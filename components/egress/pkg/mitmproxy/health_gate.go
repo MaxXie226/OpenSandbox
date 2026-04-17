@@ -12,30 +12,39 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package telemetry
+package mitmproxy
 
 import (
-	"context"
 	"os"
-	"strings"
-
-	"go.opentelemetry.io/otel/attribute"
+	"sync/atomic"
 
 	"github.com/alibaba/opensandbox/egress/pkg/constants"
-	inttelemetry "github.com/alibaba/opensandbox/internal/telemetry"
-	"github.com/alibaba/opensandbox/internal/version"
 )
 
-const serviceName = "opensandbox-egress"
+// HealthGate coordinates HTTP GET /healthz with transparent mitm readiness (listener, iptables, CA export).
+type HealthGate struct {
+	required bool // transparent mitm enabled via env
+	ready    atomic.Bool
+}
 
-func Init(ctx context.Context) (shutdown func(context.Context) error, err error) {
-	var attrs []attribute.KeyValue
-	if id := strings.TrimSpace(os.Getenv(constants.EnvSandboxID)); id != "" {
-		attrs = append(attrs, attribute.String("sandbox_id", id))
+func NewHealthGate() *HealthGate {
+	required := constants.IsTruthy(os.Getenv(constants.EnvMitmproxyTransparent))
+	g := &HealthGate{required: required}
+	if !required {
+		g.ready.Store(true)
 	}
-	return inttelemetry.Init(ctx, inttelemetry.Config{
-		ServiceName:        serviceName + "-" + version.Version,
-		ResourceAttributes: attrs,
-		RegisterMetrics:    registerEgressMetrics,
-	})
+	return g
+}
+
+func (g *HealthGate) MarkStackReady() {
+	if g != nil {
+		g.ready.Store(true)
+	}
+}
+
+func (g *HealthGate) MitmPending() bool {
+	if g == nil {
+		return false
+	}
+	return g.required && !g.ready.Load()
 }
